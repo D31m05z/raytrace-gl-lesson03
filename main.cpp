@@ -1,0 +1,984 @@
+﻿#/** * * * BME-VIK-MI_2018_02_08 * * *|3.HF| * * * * * * * * * *\
+#*    _ _____   _____        __ _                              *
+#*   (_)  __ \ / ____|      / _| |                             *
+#*   |_| |__)| (___    ___ | |_| |___      ____ _ _ __ ___     *
+#*   | |  _  / \___ \ / _ \|  _| __\ \ /\ / / _` | '__/ _ \    *
+#*   | | | \ \ ____) | (_) | | | |_ \ V  V / (_| | | |  __/    *
+#*   |_|_|  \_\_____/ \___/|_|  \__| \_/\_/ \__,_|_|  \___|    *
+#*                                                             *
+#*                   http://irsoftware.net                     *
+#*                                                             *
+#*              contact_adress: sk8Geri@gmail.com               *
+#*                                                               *
+#*       This file is a part of the work done by aFagylaltos.     *
+#*         You are free to use the code in any way you like,      *
+#*         modified, unmodified or copied into your own work.     *
+#*        However, I would like you to consider the following:    *
+#*                                                               *
+#*  -If you use this file and its contents unmodified,         *
+#*              or use a major part of this file,               *
+#*     please credit the author and leave this note untouched.   *
+#*  -If you want to use anything in this file commercially,      *
+#*                please request my approval.                    *
+#*                                                              *
+#\* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#include <math.h>
+#include <stdlib.h>
+
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
+#include <windows.h>
+#endif // Win32 platform
+
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include <GL/glut.h>
+
+const int screenWidth = 600;
+const int screenHeight = 600;
+const float E = 0.001f;
+float image[screenWidth * screenHeight * 3];
+int numBubi = 100;
+
+enum CSG_operator {
+    UNIO,
+    FELTER_TOP,
+    FELTER_BOTTOM
+};
+
+float randFloat(float a, float b) {
+    return ((b - a) * ((float) rand() / RAND_MAX)) + a;
+}
+
+//--------------------------------------------------------
+// 3D Vektor
+//--------------------------------------------------------
+struct Vector {
+    float x, y, z, h;
+
+    Vector() {
+        x = y = z = h = 0.0f;
+    }
+
+    Vector(float x0, float y0, float z0, float h0 = 0) {
+        x = x0;
+        y = y0;
+        z = z0;
+        h = h0;
+    }
+
+    float &operator[](int i) { return *(&x + i); }
+
+    Vector operator*(float a) const {
+        return Vector(x * a, y * a, z * a, h * a);
+    }
+
+    Vector operator/(float d) const {
+        return Vector(x / d, y / d, z / d, h / d);
+    }
+
+    Vector operator+(const Vector &v) const {
+        return Vector(x + v.x, y + v.y, z + v.z, h + v.h);
+    }
+
+    Vector operator-(const Vector &v) const {
+        return Vector(x - v.x, y - v.y, z - v.z, h - v.h);
+    }
+
+    float operator*(const Vector &v) const {    // dot product
+        return (x * v.x + y * v.y + z * v.z + h * v.h);
+    }
+
+    Vector operator%(const Vector &v) {
+        return Vector(y * v.z - v.y * z, z * v.x - x * v.z, x * v.y - y * v.x);
+    }
+
+    float Length() { return sqrtf(x * x + y * y + z * z + h * h); }
+
+    Vector &Normalize() {
+        float norm = Length();
+        x /= norm;
+        y /= norm;
+        z /= norm;
+        h /= norm;
+        return *this;
+    }
+};
+
+#define Point(x, y, z) Vector(x,y,z,1)
+
+struct Matrix4x4 {
+    float m[4][4];
+
+    Matrix4x4() {
+        clear();
+    }
+
+    void clear() {
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+                m[i][j] = 0;
+    }
+
+    Vector operator*(Vector v) {
+        Vector result(0.0f, 0.0f, 0.0f, 0.0f);
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+                result[i] += m[i][j] * v[j];
+
+        return result;
+    }
+
+    Matrix4x4 operator*(const Matrix4x4 &mat) {
+        Matrix4x4 result;
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++) {
+                result.m[i][j] = 0;
+                for (int k = 0; k < 4; k++)
+                    result.m[i][j] += m[i][k] * mat.m[k][j];
+            }
+
+        return result;
+    }
+
+    float &operator()(int i, int j) { return m[i][j]; }
+};
+
+struct Color {
+    float r, g, b;
+
+    Color() {
+        r = g = b = 0;
+    }
+
+    Color(float r0, float g0, float b0) {
+        r = r0;
+        g = g0;
+        b = b0;
+    }
+
+    Color operator*(float a) {
+        return Color(r * a, g * a, b * a);
+    }
+
+    Color operator*(const Color &c) {
+        return Color(r * c.r, g * c.g, b * c.b);
+    }
+
+    Color operator+(const Color &c) {
+        return Color(r + c.r, g + c.g, b + c.b);
+    }
+
+    Color operator-(const Color &c) {
+        return Color(r - c.r, g - c.g, b - c.b);
+    }
+
+    Color operator+=(const Color &c) {
+        r += c.r;
+        g += c.g;
+        b += c.b;
+        return *this;
+    }
+};
+
+struct Ray {
+    Vector o;
+    Vector v;
+};
+
+struct Bubi {
+    float x, y, z;
+    float sizeX, sizeY, sizeZ;
+} bubi[200];
+
+class Camera {
+    Vector eye;
+    Vector lookat;
+    Vector up;
+    Vector right;
+public:
+    Camera(Vector _eye, Vector _lookat, Vector _right, Vector _up) {
+        eye = _eye;
+        lookat = _lookat;
+        right = _right;
+        up = _up;
+    }
+
+    Ray getRay(int x, int y) {
+        Ray ray;
+        ray.o = eye;
+        ray.v = lookat + right * (2.0f * x / screenWidth - 1) + up * (2.0f * y / screenHeight - 1) - eye;
+        ray.v.Normalize();
+        return ray;
+    }
+};
+
+struct Material {
+    Color F0;
+    Color ka, kd, ks;
+    float n, shine;
+    bool isReflective, isRefractive;
+
+    Material() {
+        isReflective = false;
+        isRefractive = false;
+    }
+
+    void ReflectionDir(Vector &R, Vector &N, Vector &V) {
+        float cosa = -(N * V);
+        R = V + N * cosa * 2;
+    }
+
+    bool RefractionDir(Vector &T, Vector &N, Vector &V) {
+        float cosa = -(N * V), cn = n;
+        if (cosa < 0) {
+            cosa = -cosa;
+            N = N * (-1);
+            cn = 1 / n;
+        }
+        float disc = 1 - (1 - cosa * cosa) / cn / cn;
+        if (disc < 0) return false;
+        T = V / cn + N * (cosa / cn - sqrt(disc));
+        return true;
+    }
+
+    Color Frensel(Vector &N, Vector &V) {
+        float cosa = fabs(N * V);
+        return F0 + (Color(1, 1, 1) - F0) * pow(1 - cosa, 5);
+    }
+};
+
+struct Hit {
+    Vector x;
+    Vector normal;
+    Material *mat;
+    float t;
+
+    Hit() {
+        t = -1;
+        actual = false;
+    }
+
+    bool actual;
+
+    void select() {
+        actual = true;
+    }
+
+    void deselect() {
+        actual = false;
+    }
+
+    bool isActual() {
+        return actual;
+    }
+};
+
+class Object {
+protected:
+    Material *mat;
+public:
+    Object(Material *_mat) {
+        mat = _mat;
+    }
+
+    Material *getMaterial() {
+        return mat;
+    }
+
+    int indexOfSelected(Hit *hits[], int numHit) {
+        for (int i = 0; i < numHit; i++) {
+            if (hits[i]->isActual())
+                return i;
+        }
+        return -1;
+    }
+
+    int hitShort(Hit *hit, Hit *hits[], int numHit, int csg_operator) {
+        hit->select();
+
+        if (numHit == 0)
+            hits[numHit++] = hit;
+        else if (hits[0] != NULL && hits[numHit - 1]->t < hit->t) {
+            hits[numHit++] = hit;
+        } else if (hits[0] != NULL) {
+            for (int i = 0; i < numHit; i++) {
+                if (hits[i]->t > hit->t) {
+
+                    for (int j = numHit; j > i; j--)
+                        hits[j] = hits[j - 1];
+
+                    hits[i] = hit;
+                    numHit++;
+                    break;
+                }
+            }
+        }
+
+        if (hits[0] == NULL)
+            return 0;
+
+        int selected = indexOfSelected(hits, numHit);
+
+        if (csg_operator == FELTER_TOP) {
+
+            if (numHit > 1 && selected == 0) {
+                delete hits[selected];
+                hits[selected] = NULL;
+            }
+
+            if (hits[selected + 1] == NULL) {
+                delete hits[selected];
+                hits[selected] = NULL;
+            }
+
+            for (int i = 0; i < numHit; i++) {
+                if (hits[i] != NULL)
+                    if (hits[i]->x.x > 4.5 && i != selected) {
+                        delete hits[i];
+                        hits[i] = NULL;
+                    }
+            }
+        } else if (csg_operator == FELTER_BOTTOM) {
+            for (int i = 0; i < numHit; i++) {
+                if (hits[i]->x.x < -0.01) {
+                    delete hits[i];
+                    hits[i] = NULL;
+                }
+            }
+        }
+
+        for (int i = 0; i < numHit; i++) {
+            if (hits[i] == NULL) {
+
+                for (int j = i; j < numHit; j++) {
+                    hits[j] = hits[j + 1];
+                    hits[j + 1] = NULL;
+                }
+
+                numHit--;
+                i--;
+            }
+        }
+
+        if (selected != -1 && hits[selected] != NULL)
+            hits[selected]->deselect();
+
+        return numHit;
+    }
+
+    virtual Hit Intersect(Ray ray) = 0;
+
+    virtual void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) = 0;
+};
+
+class Elipszoid : public Object {
+    Matrix4x4 A;
+public:
+    Elipszoid(Vector position, Vector axes, Material *mat) : Object(mat) {
+        float a = axes[0];
+        float b = axes[1];
+        float c = axes[2];
+
+        float a2 = a * a;
+        float b2 = b * b;
+        float c2 = c * c;
+
+        float x0 = position[0];
+        float y0 = position[1];
+        float z0 = position[2];
+
+        A(0, 0) = 1.0f / a2;
+        A(0, 1) = 0;
+        A(0, 2) = 0;
+        A(0, 3) = -x0 / a2;
+        A(1, 0) = 0;
+        A(1, 1) = 1.0f / b2;
+        A(1, 2) = 0;
+        A(1, 3) = -y0 / b2;
+        A(2, 0) = 0;
+        A(2, 1) = 0;
+        A(2, 2) = 1.0f / c2;
+        A(2, 3) = -z0 / c2;
+        A(3, 0) = -x0 / a2;
+        A(3, 1) = -y0 / b2;
+        A(3, 2) = -z0 / c2;
+        A(3, 3) = -1 + x0 * x0 / a2 + y0 * y0 / b2 + z0 * z0 / c2;
+
+    }
+
+    Hit Intersect(Ray ray) {
+        Hit hit;
+        double a = ray.v * (A * ray.v);
+        double b = ray.o * (A * ray.v) + ray.v * (A * ray.o);
+        double c = ray.o * (A * ray.o);
+        double disc = b * b - 4 * a * c;
+        if (disc < E) return hit;
+        disc = sqrt(disc);
+        hit.t = (-b - disc) / 2 / a;
+
+        if (hit.t < E) hit.t = (-b + disc) / 2 / a;
+        if (hit.t < E) return hit;
+        hit.x = ray.o + ray.v * hit.t;
+        hit.normal = A * hit.x;
+        hit.normal.h = 0;
+        hit.mat = mat;
+        return hit;
+    }
+
+    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) {
+        double a = ray.v * (A * ray.v);
+        double b = ray.o * (A * ray.v) + ray.v * (A * ray.o);
+        double c = ray.o * (A * ray.o);
+
+        double disc = b * b - 4 * a * c;
+
+        if (disc < E) {
+            return;
+        }
+
+        disc = sqrt(disc);
+        Hit *hit = new Hit();
+        hit->deselect();
+        hit->t = (-b - disc) / 2 / a;
+        if (hit->t >= E) {
+            hit->x = ray.o + ray.v * hit->t;
+            hit->normal = A * hit->x;
+            hit->normal.h = 0;
+            hit->mat = mat;
+
+            numHit = hitShort(hit, hits, numHit, csg_operator);
+        } else delete hit;
+
+        hit = new Hit();
+        hit->deselect();
+        hit->t = (-b + disc) / 2 / a;
+        if (hit->t >= E) {
+            hit->x = ray.o + ray.v * hit->t;
+            hit->normal = A * hit->x;
+            hit->normal.h = 0;
+            hit->mat = mat;
+
+            numHit = hitShort(hit, hits, numHit, csg_operator);
+        } else delete hit;
+    }
+};
+
+class Plane : public Object {
+    Vector p1, p2, p3, p4;
+    Vector n;
+    Material *mat1;
+    Material *mat2;
+
+public:
+    Plane(Vector _p1, Vector _p2, Vector _p3, Vector _p4, Material *material1, Material *material2 = NULL)
+            : Object(material1) {
+        p1 = _p1;
+        p2 = _p2;
+        p3 = _p3;
+        p4 = _p4;
+
+        n = (p1 - p2) % (p3 - p2);
+        n.Normalize();
+        n.h = 0;
+
+        mat1 = mat2 = NULL;
+        mat1 = material1;
+        if (material2 != NULL)
+            mat2 = material2;
+
+    }
+
+    Hit Intersect(Ray ray) {
+        Hit hit;
+
+        float a = ray.v * n;
+        if (a < E && a > -E)
+            return hit;
+
+        hit.t = (p2 - ray.o) * n / a;
+
+        if (hit.t < E)
+            return hit;
+
+        hit.x = ray.o + ray.v * hit.t;
+
+        if (ray.o.x > p1.x)
+            hit.normal = n * -1;
+        else
+            hit.normal = n;
+
+        hit.mat = mat1;
+
+        if ((((p1 - p2) % ((hit).x - p2)) * n >= 0 && ((p3 - p1) % ((hit).x - p1)) * n >= 0 &&
+             ((p2 - p3) % ((hit).x - p3)) * n >= 0) ||
+            (((p1 - p3) % ((hit).x - p3)) * n >= 0 && ((p4 - p1) % ((hit).x - p1)) * n >= 0 &&
+             ((p3 - p4) % ((hit).x - p4)) * n >= 0)) {
+            return hit;
+        }
+
+        hit.t = -1;
+        return hit;
+    }
+
+    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) {
+        float a = ray.v * n;
+        if (a < E && a > -E)
+            return;
+
+        Hit *hit = new Hit();
+        hit->deselect();
+        hit->t = (p2 - ray.o) * n / a;
+
+        if (hit->t < E) {
+            delete hit;
+            return;
+        }
+
+        hit->x = ray.o + ray.v * hit->t;
+
+        if (ray.o.x > p1.x)
+            hit->normal = n * -1;
+        else
+            hit->normal = n;
+
+        if (mat2 == NULL) {
+            hit->mat = mat1;
+        } else {
+
+            float yy = (hit->x.y);
+            float zz = (hit->x.z);
+
+            if (yy < 0) {
+                if (((int) yy + (int) zz) % 2 == 0)
+                    hit->mat = mat1;
+                else
+                    hit->mat = mat2;
+            } else {
+                if (((int) yy + (int) zz) % 2 == 0)
+                    hit->mat = mat2;
+                else
+                    hit->mat = mat1;
+            }
+
+        }
+
+        Vector p = hit->x;
+
+        if ((((p1 - p2) % (p - p2)) * n >= 0 && ((p3 - p1) % (p - p1)) * n >= 0 && ((p2 - p3) % (p - p3)) * n >= 0) ||
+            (((p1 - p3) % (p - p3)) * n >= 0 && ((p4 - p1) % (p - p1)) * n >= 0 && ((p3 - p4) % (p - p4)) * n >= 0)) {
+            numHit = hitShort(hit, hits, numHit, csg_operator);
+            return;
+        }
+
+        delete hit;
+        return;
+    }
+};
+
+struct Light {
+    Vector pos;
+    Color lin;
+
+    Light(Vector _pos, Color _lin) : pos(_pos), lin(_lin) {
+    }
+};
+
+class CSG : public Object {
+    Object *csg_node[8];
+    int numNode;
+
+    int csg_operator[9];
+    int numOperator;
+    int numHit;
+
+public:
+    CSG() : Object(NULL) {
+        numNode = 0;
+        numOperator = 0;
+    }
+
+    void addObject(Object *obj, int _csg_operator) {
+        csg_node[numNode++] = obj;
+        csg_operator[numOperator++] = _csg_operator;
+    }
+
+    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) {
+    }
+
+    Hit Intersect(Ray ray) {
+        Hit *hits[10];
+        numHit = 0;
+        Hit hit;
+
+        for (int i = 0; i < 10; i++) {
+            hits[i] = NULL;
+        }
+
+        for (int i = 0; i < numNode; i++) {
+            csg_node[i]->CSGIntersect(ray, hits, numHit, csg_operator[i]);
+        }
+
+        for (int i = 0; i < numHit; i++) {
+            if (hits[i] != NULL) {
+                hit = *hits[i];
+                break;
+            }
+        }
+
+        for (int i = 0; i < 10; i++) {
+            if (hits[i] != 0)
+                delete hits[i];
+        }
+
+        return hit;
+    }
+};
+
+struct Sector {
+    int x, y;
+    int width, height;
+    bool finished;
+    bool rendering;
+
+    Sector() {};
+
+    Sector(int _x, int _y, int _width, int _height) {
+        x = _x;
+        y = _y;
+        width = _width;
+        height = _height;
+        finished = false;
+        rendering = false;
+    }
+} sectors[8][8];
+
+
+void sectorIJ(int &_i, int &_j) {
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            if (!sectors[i][j].rendering) {
+                sectors[i][j].rendering = true;
+                _i = i;
+                _j = j;
+                return;
+            }
+        }
+    }
+    _i = _j = -1;
+}
+
+Light *lights[100];
+int numLights = 0;
+Camera *camera;
+
+class Scene {
+    Object *objects[200];
+    int numObjects;
+    Color La;
+    bool isFinished;
+public:
+    Scene();
+
+    void makeDrawable();
+
+    void Render();
+
+    Color trace(Ray ray, int d = 0);
+
+    Hit intersectAll(Ray ray);
+} scene;
+
+Scene::Scene() {
+    numObjects = 0;
+    isFinished = false;
+    La = Color(0.2, 0.2, 0.5);
+}
+
+void Scene::makeDrawable() {
+    Material *glass_mat = new Material;
+    glass_mat->kd = Color(0.01, 0.01, 0.02);
+    glass_mat->ka = Color(0.5, 0.5, 0.5);
+    glass_mat->ks = Color(0.0, 0.0, 0.0);
+    glass_mat->shine = 50;
+    glass_mat->n = 1.5f;
+    glass_mat->F0 = Color(0.2, 0.2, 0.0);
+    glass_mat->isReflective = false;
+    glass_mat->isRefractive = true;
+
+    Material *bier_mat = new Material;
+    bier_mat->kd = Color(0.0, 0.0, 0.0);
+    bier_mat->ka = Color(0.3, 0.3, 0.0);
+    bier_mat->ks = Color(0.0, 0.0, 0.0);
+    bier_mat->shine = 50;
+    bier_mat->n = 1.3 / 1.5;
+    bier_mat->F0 = Color(0, 0, 0.8);
+    bier_mat->isReflective = false;
+    bier_mat->isRefractive = true;
+
+    Material *bier_mat2 = new Material;
+    bier_mat2->kd = Color(0.0, 0.0, 0.0);
+    bier_mat2->ka = Color(0.4, 0.4, 0.0);
+    bier_mat2->ks = Color(0.0, 0.0, 0.0);
+    bier_mat2->shine = 50;
+    bier_mat2->n = 1.3 / 1.0;
+    bier_mat2->F0 = Color(0, 0, 0.9);
+    bier_mat2->isReflective = true;
+    bier_mat2->isRefractive = true;
+
+    Material *talp_mat = new Material;
+    talp_mat->kd = Color(.1, .1, .1);
+    talp_mat->ka = Color(.1, .1, .1);
+    talp_mat->ks = Color(0.0, 0.0, 0.0);
+    talp_mat->shine = 40;
+    talp_mat->n = 1.5f;
+    talp_mat->F0 = Color(0.0, 0.0, 0.0);
+    talp_mat->isReflective = false;
+    talp_mat->isRefractive = true;
+
+    Material *bubi_mat = new Material;
+    bubi_mat->kd = Color(0.2, 0.5, 0.2);
+    bubi_mat->ka = Color(0.3, 0.3, 0.3);
+    bubi_mat->ks = Color(0.0, 0.0, 0.0);
+    bubi_mat->shine = 20;
+    bubi_mat->n = 1.0 / 1.3f;
+    bubi_mat->F0 = Color(0.0, 0.0, 0.0);
+    bubi_mat->isReflective = false;
+    bubi_mat->isRefractive = true;
+
+    Material *plane_mat1 = new Material;
+    plane_mat1->kd = Color(1.0, 1.0, 1.0);
+    plane_mat1->ka = Color(0.5, 0.5, 0.5);
+    plane_mat1->ks = Color(4.0, 4.0, 4.0);
+    plane_mat1->shine = 30;
+    plane_mat1->n = 1.5f;
+    plane_mat1->F0 = Color(0.5, 0.5, 0.5);
+    plane_mat1->isReflective = false;
+    plane_mat1->isRefractive = false;
+
+    Material *plane_mat2 = new Material;
+    plane_mat2->kd = Color(1.0, 0.0, 0.0);
+    plane_mat2->ka = Color(0.8, 0.0, 0.0);
+    plane_mat2->ks = Color(2.0, 2.0, 2.0);
+    plane_mat2->shine = 30;
+    plane_mat2->n = 1.5f;
+    plane_mat2->F0 = Color(0.5, 0.5, 0.0);
+    plane_mat2->isReflective = false;
+    plane_mat2->isRefractive = false;
+
+    Elipszoid *glass = new Elipszoid(Point(3.5, 0, 10), Vector(3, 1.5, 1.5), glass_mat);
+    Elipszoid *bier = new Elipszoid(Point(3.5, 0, 10), Vector(2.9, 1.45, 1.45), bier_mat);
+    Elipszoid *talp = new Elipszoid(Point(0, 0, 10), Vector(0.5, 1.2, 1.3), talp_mat);
+
+    Plane *asztal = new Plane(Point(0, 10, 5), Point(0, 10, 25), Point(0, -10, 25), Point(0, -10, 5), plane_mat1, plane_mat2);
+    Plane *cutter = new Plane(Point(4.5, 10, 5), Point(4.5, 10, 30), Point(4.5, -10, 30), Point(4.5, -10, 5), bier_mat2);
+
+    CSG *csg = new CSG();
+    csg->addObject(bier, UNIO);
+    csg->addObject(glass, UNIO);
+    csg->addObject(cutter, FELTER_TOP);
+    csg->addObject(talp, UNIO);
+    csg->addObject(asztal, FELTER_BOTTOM);
+    objects[numObjects++] = csg;
+
+    for (int i = 0; i < numBubi; i++) {
+        float x = bubi[i].x;
+        float y = bubi[i].y;
+        float z = bubi[i].z;
+
+        float sizeX = bubi[i].sizeX;
+        float sizeY = bubi[i].sizeY;
+        float sizeZ = bubi[i].sizeZ;
+
+        Elipszoid *bubi = new Elipszoid(Point(y, x, z), Vector(sizeX, sizeY, sizeZ), bubi_mat);
+        objects[numObjects++] = bubi;
+    }
+}
+
+void Scene::Render() {
+    if (isFinished) return;
+
+    for (int x = 0; x < screenWidth; x++) {
+        for (int y = 0; y < screenHeight; y++) {
+            Ray ray = camera->getRay(x, y);
+            Color Lrad = trace(ray);
+            image[y * screenWidth * 3 + x * 3] = Lrad.r;
+            image[y * screenWidth * 3 + x * 3 + 1] = Lrad.g;
+            image[y * screenWidth * 3 + x * 3 + 2] = Lrad.b;
+        }
+
+        glClearColor(0.1f, 0.2f, 0.3f, 1.0f);        // torlesi szin beallitasa
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // kepernyo torles
+        glDrawPixels(screenWidth, screenHeight, GL_RGB, GL_FLOAT, image);
+        glutSwapBuffers();
+    }
+    isFinished = true;
+}
+
+Color Scene::trace(Ray ray, int d) {
+    if (d > 5) return La;
+    Hit hit = intersectAll(ray);
+    if (hit.t < 0) return La;
+
+    Color c = La * hit.mat->ka;
+    Vector N = hit.normal;
+    Vector x = hit.x;
+
+    Color temp = hit.mat->F0;
+
+    for (int l = 0; l < numLights; l++) {
+        Ray shadowRay;
+        shadowRay.o = x;
+        shadowRay.v = lights[l]->pos - x;
+        Hit shadowHit = intersectAll(shadowRay);
+        Vector y = shadowHit.x;
+        if (shadowHit.t<0 || (x - y).Length()>(x - lights[l]->pos).Length()) {
+            Vector H = lights[l]->pos - ray.v;
+            H.Normalize();
+            float costheta = (N * shadowRay.v.Normalize());
+            if (costheta < 0) costheta = 0;
+            float cosdelta = H * N;
+            if (cosdelta < 0 /*|| hit.mat->isRefractive*/) cosdelta = 0;
+            c += lights[l]->lin * (hit.mat->kd * costheta + hit.mat->ks * pow(cosdelta, hit.mat->shine));
+        }
+    }
+
+    if (hit.mat->isReflective) {
+        Ray reflectedRay;
+        reflectedRay.o = x;
+        hit.mat->ReflectionDir(reflectedRay.v, N, ray.v);
+        c += hit.mat->Frensel(N, ray.v) * trace(reflectedRay, d + 1);
+    }
+
+    if (hit.mat->isRefractive) {
+        Ray refractedRay;
+        refractedRay.o = x;
+
+        if (hit.mat->RefractionDir(refractedRay.v, N, ray.v))
+            c += (Color(1, 1, 1) - hit.mat->Frensel(N, ray.v)) * trace(refractedRay, d + 1);
+        else {
+            hit.mat->F0 = Color(1, 1, 1);
+            Ray reflectedRay;
+            reflectedRay.o = x;
+            hit.mat->ReflectionDir(reflectedRay.v, N, ray.v);
+            c += hit.mat->Frensel(N, ray.v) * trace(reflectedRay, d + 1);
+        }
+    }
+
+    hit.mat->F0 = temp;
+
+    return c;
+}
+
+Hit Scene::intersectAll(Ray ray) {
+    Hit hit;
+    for (int i = 0; i < numObjects; i++) {
+        Hit newHit = objects[i]->Intersect(ray);
+        if (newHit.t > E) {
+            if (hit.t < E || newHit.t < hit.t)
+                hit = newHit;
+        }
+    }
+
+    if (hit.t > E) hit.normal.Normalize();
+    return hit;
+}
+
+void reset() {
+    int w = 75;
+    int h = 75;
+
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            sectors[i][j].x = i * w;
+            sectors[i][j].y = j * h;
+            sectors[i][j].width = w;
+            sectors[i][j].height = h;
+            sectors[i][j].finished = false;
+            sectors[i][j].rendering = false;
+        }
+    }
+
+    sectors[7][7].finished = true;
+    sectors[7][7].rendering = true;
+}
+
+void initScene() {
+
+    camera = new Camera(Point(8, 0, -2), Point(7, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0));
+    numLights = 0;
+    lights[numLights++] = new Light(Vector(2.5, 1.2, -0.2), Color(1.9, 1.9, 1.9));
+    lights[numLights++] = new Light( Vector(2.5,1.2,-0.2), Color(1.9,1.8,0.6) );
+
+    scene.makeDrawable();
+}
+
+void onInitialization() {
+    glViewport(0, 0, screenWidth, screenHeight);
+
+    for (int i = 0; i < numBubi; i++) {
+        float x = randFloat(-1.0, 1.0);
+        float y = randFloat(1.0, 3.6);
+        float z = randFloat(10.5, 11.0);
+
+        float sizeX = randFloat(0.02, 0.05);
+        float sizeY = randFloat(0.02, 0.04);
+        float sizeZ = randFloat(0.02, 0.04);
+
+        bubi[i].x = x;
+        bubi[i].y = y;
+        bubi[i].z = z;
+
+        bubi[i].sizeX = sizeX;
+        bubi[i].sizeY = sizeY;
+        bubi[i].sizeZ = sizeZ;
+    }
+
+    reset();
+    initScene();
+}
+
+void onDisplay() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    scene.Render();
+
+    glDrawPixels(screenWidth, screenHeight, GL_RGB, GL_FLOAT, image);
+
+    glutSwapBuffers();
+}
+
+
+void onKeyboard(unsigned char key, int x, int y) {
+}
+
+void onMouse(int button, int state, int x, int y) {
+}
+
+void onIdle() {
+    glutPostRedisplay();
+}
+
+int main(int argc, char **argv) {
+    glutInit(&argc, argv);
+    glutInitWindowSize(600, 600);
+    glutInitWindowPosition(100, 100);
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
+
+    glutCreateWindow("Raytrace - lesson 04");
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+
+    onInitialization();
+
+    glutDisplayFunc(onDisplay);
+    glutMouseFunc(onMouse);
+    glutIdleFunc(onIdle);
+    glutKeyboardFunc(onKeyboard);
+    glutMainLoop();
+
+    return 0;
+} 
