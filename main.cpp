@@ -23,13 +23,19 @@
 #*                                                              *
 #\* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+
 #include <math.h>
 #include <stdlib.h>
+#include <iostream>
+#include <vector>
+#include <algorithm>
 
 #if defined(__APPLE__)
+
 #include <OpenGL/gl.h>
 #include <OpenGL/glu.h>
 #include <GLUT/glut.h>
+
 #else
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
 #include <windows.h>
@@ -43,7 +49,7 @@ const int screenWidth = 600;
 const int screenHeight = 600;
 const float E = 0.001f;
 float image[screenWidth * screenHeight * 3];
-int numBubi = 100;
+const size_t numBubies = 40;
 
 enum CSG_operator {
     UNIO,
@@ -190,11 +196,6 @@ struct Ray {
     Vector o;
     Vector v;
 };
-
-struct Bubi {
-    float x, y, z;
-    float sizeX, sizeY, sizeZ;
-} bubi[200];
 
 class Camera {
     Vector eye;
@@ -412,7 +413,7 @@ public:
 
     }
 
-    Hit Intersect(Ray ray) {
+    Hit Intersect(Ray ray) override {
         Hit hit;
         double a = ray.v * (A * ray.v);
         double b = ray.o * (A * ray.v) + ray.v * (A * ray.o);
@@ -431,7 +432,7 @@ public:
         return hit;
     }
 
-    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) {
+    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) override {
         double a = ray.v * (A * ray.v);
         double b = ray.o * (A * ray.v) + ray.v * (A * ray.o);
         double c = ray.o * (A * ray.o);
@@ -494,7 +495,7 @@ public:
 
     }
 
-    Hit Intersect(Ray ray) {
+    Hit Intersect(Ray ray) override {
         Hit hit;
 
         float a = ray.v * n;
@@ -526,7 +527,7 @@ public:
         return hit;
     }
 
-    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) {
+    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) override {
         float a = ray.v * n;
         if (a < E && a > -E)
             return;
@@ -585,8 +586,7 @@ struct Light {
     Vector pos;
     Color lin;
 
-    Light(Vector _pos, Color _lin) : pos(_pos), lin(_lin) {
-    }
+    Light(Vector _pos, Color _lin) : pos(_pos), lin(_lin) {}
 };
 
 class CSG : public Object {
@@ -608,10 +608,9 @@ public:
         csg_operator[numOperator++] = _csg_operator;
     }
 
-    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) {
-    }
+    void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) override {}
 
-    Hit Intersect(Ray ray) {
+    Hit Intersect(Ray ray) override {
         Hit *hits[10];
         numHit = 0;
         Hit hit;
@@ -646,18 +645,9 @@ struct Sector {
     bool finished;
     bool rendering;
 
-    Sector() {};
+    Sector() : x(0), y(0), width(0), height(0), finished(false), rendering(false) {};
 
-    Sector(int _x, int _y, int _width, int _height) {
-        x = _x;
-        y = _y;
-        width = _width;
-        height = _height;
-        finished = false;
-        rendering = false;
-    }
 } sectors[8][8];
-
 
 void sectorIJ(int &_i, int &_j) {
     for (int i = 0; i < 8; i++) {
@@ -673,15 +663,11 @@ void sectorIJ(int &_i, int &_j) {
     _i = _j = -1;
 }
 
-Light *lights[100];
-int numLights = 0;
-Camera *camera;
-
 class Scene {
-    Object *objects[200];
-    int numObjects;
+    Camera camera;
+    std::vector<Light> lights;
+    std::vector<Object*> objects;
     Color La;
-    bool isFinished;
 public:
     Scene();
 
@@ -694,10 +680,13 @@ public:
     Hit intersectAll(Ray ray);
 } scene;
 
-Scene::Scene() {
-    numObjects = 0;
-    isFinished = false;
+Scene::Scene()
+    : camera(Point(8, 0, -2), Point(7, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0))
+{
     La = Color(0.2, 0.2, 0.5);
+
+    lights.push_back(Light(Vector(2.5, 1.2, -0.2), Color(1.9, 1.9, 1.9)));
+    lights.push_back(Light(Vector(2.5, 1.2, -0.2), Color(1.9, 1.8, 0.6)));
 }
 
 void Scene::makeDrawable() {
@@ -775,28 +764,29 @@ void Scene::makeDrawable() {
     Elipszoid *bier = new Elipszoid(Point(3.5, 0, 10), Vector(2.9, 1.45, 1.45), bier_mat);
     Elipszoid *talp = new Elipszoid(Point(0, 0, 10), Vector(0.5, 1.2, 1.3), talp_mat);
 
-    Plane *asztal = new Plane(Point(0, 10, 5), Point(0, 10, 25), Point(0, -10, 25), Point(0, -10, 5), plane_mat1, plane_mat2);
-    Plane *cutter = new Plane(Point(4.5, 10, 5), Point(4.5, 10, 30), Point(4.5, -10, 30), Point(4.5, -10, 5), bier_mat2);
+    Plane *asztal = new Plane(Point(0, 10, 5), Point(0, 10, 25), Point(0, -10, 25), Point(0, -10, 5), plane_mat1,
+                              plane_mat2);
+    Plane *cutter = new Plane(Point(4.5, 10, 5), Point(4.5, 10, 30), Point(4.5, -10, 30), Point(4.5, -10, 5),
+                              bier_mat2);
 
-    CSG *csg = new CSG();
+    CSG* csg = new CSG();
     csg->addObject(bier, UNIO);
     csg->addObject(glass, UNIO);
     csg->addObject(cutter, FELTER_TOP);
     csg->addObject(talp, UNIO);
     csg->addObject(asztal, FELTER_BOTTOM);
-    objects[numObjects++] = csg;
+    objects.push_back(csg);
 
-    for (int i = 0; i < numBubi; i++) {
-        float x = bubi[i].x;
-        float y = bubi[i].y;
-        float z = bubi[i].z;
+    for (size_t i = 0; i < numBubies; i++) {
+        float x = randFloat(-1.0, 1.0);
+        float y = randFloat(1.0, 3.6);
+        float z = randFloat(10.5, 11.0);
 
-        float sizeX = bubi[i].sizeX;
-        float sizeY = bubi[i].sizeY;
-        float sizeZ = bubi[i].sizeZ;
+        float sizeX = randFloat(0.02, 0.05);
+        float sizeY = randFloat(0.02, 0.04);
+        float sizeZ = randFloat(0.02, 0.04);
 
-        Elipszoid *bubi = new Elipszoid(Point(y, x, z), Vector(sizeX, sizeY, sizeZ), bubi_mat);
-        objects[numObjects++] = bubi;
+        objects.push_back(new Elipszoid(Point(y, x, z), Vector(sizeX, sizeY, sizeZ), bubi_mat));
     }
 }
 
@@ -831,20 +821,20 @@ Color Scene::trace(Ray ray, int d) {
 
     Color temp = hit.mat->F0;
 
-    for (int l = 0; l < numLights; l++) {
+    for (int l = 0; l < lights.size(); l++) {
         Ray shadowRay;
         shadowRay.o = x;
-        shadowRay.v = lights[l]->pos - x;
+        shadowRay.v = lights[l].pos - x;
         Hit shadowHit = intersectAll(shadowRay);
         Vector y = shadowHit.x;
-        if (shadowHit.t<0 || (x - y).Length()>(x - lights[l]->pos).Length()) {
-            Vector H = lights[l]->pos - ray.v;
+        if (shadowHit.t<0 || (x - y).Length()>(x - lights[l].pos).Length()) {
+            Vector H = lights[l].pos - ray.v;
             H.Normalize();
             float costheta = (N * shadowRay.v.Normalize());
             if (costheta < 0) costheta = 0;
             float cosdelta = H * N;
             if (cosdelta < 0 /*|| hit.mat->isRefractive*/) cosdelta = 0;
-            c += lights[l]->lin * (hit.mat->kd * costheta + hit.mat->ks * pow(cosdelta, hit.mat->shine));
+            c += lights[l].lin * (hit.mat->kd * costheta + hit.mat->ks * pow(cosdelta, hit.mat->shine));
         }
     }
 
@@ -920,27 +910,7 @@ void initScene() {
 
 void onInitialization() {
     glViewport(0, 0, screenWidth, screenHeight);
-
-    for (int i = 0; i < numBubi; i++) {
-        float x = randFloat(-1.0, 1.0);
-        float y = randFloat(1.0, 3.6);
-        float z = randFloat(10.5, 11.0);
-
-        float sizeX = randFloat(0.02, 0.05);
-        float sizeY = randFloat(0.02, 0.04);
-        float sizeZ = randFloat(0.02, 0.04);
-
-        bubi[i].x = x;
-        bubi[i].y = y;
-        bubi[i].z = z;
-
-        bubi[i].sizeX = sizeX;
-        bubi[i].sizeY = sizeY;
-        bubi[i].sizeZ = sizeZ;
-    }
-
     reset();
-    initScene();
 }
 
 void onDisplay() {
