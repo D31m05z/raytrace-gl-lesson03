@@ -260,7 +260,7 @@ struct Material {
 struct Hit {
     Vector x;
     Vector normal;
-    Material *mat;
+    Material mat;
     float t;
 
     Hit() {
@@ -285,13 +285,13 @@ struct Hit {
 
 class Object {
 protected:
-    Material *mat;
+    Material mat;
 public:
-    Object(Material *_mat) {
+    Object(Material _mat) {
         mat = _mat;
     }
 
-    Material *getMaterial() {
+    Material getMaterial() {
         return mat;
     }
 
@@ -384,7 +384,7 @@ public:
 class Elipszoid : public Object {
     Matrix4x4 A;
 public:
-    Elipszoid(Vector position, Vector axes, Material *mat) : Object(mat) {
+    Elipszoid(Vector position, Vector axes, Material mat) : Object(mat) {
         float a = axes[0];
         float b = axes[1];
         float c = axes[2];
@@ -476,11 +476,11 @@ public:
 class Plane : public Object {
     Vector p1, p2, p3, p4;
     Vector n;
-    Material *mat1;
-    Material *mat2;
+    Material mat1;
+    Material mat2;
 
 public:
-    Plane(Vector _p1, Vector _p2, Vector _p3, Vector _p4, Material *material1, Material *material2 = NULL)
+    Plane(Vector _p1, Vector _p2, Vector _p3, Vector _p4, Material material1, Material material2)
             : Object(material1) {
         p1 = _p1;
         p2 = _p2;
@@ -491,11 +491,8 @@ public:
         n.Normalize();
         n.h = 0;
 
-        mat1 = mat2 = NULL;
         mat1 = material1;
-        if (material2 != NULL)
-            mat2 = material2;
-
+        mat2 = material2;
     }
 
     Hit Intersect(Ray ray) override {
@@ -551,25 +548,19 @@ public:
         else
             hit->normal = n;
 
-        if (mat2 == NULL) {
-            hit->mat = mat1;
+        float yy = (hit->x.y);
+        float zz = (hit->x.z);
+
+        if (yy < 0) {
+            if (((int) yy + (int) zz) % 2 == 0)
+                hit->mat = mat1;
+            else
+                hit->mat = mat2;
         } else {
-
-            float yy = (hit->x.y);
-            float zz = (hit->x.z);
-
-            if (yy < 0) {
-                if (((int) yy + (int) zz) % 2 == 0)
-                    hit->mat = mat1;
-                else
-                    hit->mat = mat2;
-            } else {
-                if (((int) yy + (int) zz) % 2 == 0)
-                    hit->mat = mat2;
-                else
-                    hit->mat = mat1;
-            }
-
+            if (((int) yy + (int) zz) % 2 == 0)
+                hit->mat = mat2;
+            else
+                hit->mat = mat1;
         }
 
         Vector p = hit->x;
@@ -601,7 +592,7 @@ class CSG : public Object {
     int numHit;
 
 public:
-    CSG() : Object(NULL) {
+    CSG() : Object(Material()) {
         numNode = 0;
         numOperator = 0;
     }
@@ -614,6 +605,7 @@ public:
     void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) override {}
 
     Hit Intersect(Ray ray) override {
+        std::lock_guard<std::mutex> guard(mutex);
         Hit *hits[10];
         numHit = 0;
         Hit hit;
@@ -645,14 +637,15 @@ public:
 struct Sector {
     int x, y;
     int width, height;
-    bool finished;
-    bool rendering;
+    std::atomic<bool> finished;
+    std::atomic<bool> rendering;
 
     Sector() : x(0), y(0), width(0), height(0), finished(false), rendering(false) {};
 
 } sectors[8][8];
 
 void sectorIJ(int &_i, int &_j) {
+    std::lock_guard<std::mutex> guard(mutex);
     for (int i = 0; i < 8; i++) {
         for (int j = 0; j < 8; j++) {
             if (!sectors[i][j].rendering) {
@@ -665,98 +658,108 @@ void sectorIJ(int &_i, int &_j) {
     }
 }
 
+struct Raytracer {
+    Raytracer() {
+        La = Color(0.2, 0.2, 0.5);
+    }
+
+    Color trace(const std::vector<Light> &lights, const std::vector<Object *> &objects, Ray ray, int d = 0);
+
+    Hit intersectAll(const std::vector<Object *> &objects, Ray ray);
+
+    Color La;
+};
+
 class Scene {
     Camera camera;
     std::vector<Light> lights;
-    std::vector<Object*> objects;
-    Color La;
+    std::vector<Object *> objects;
 public:
     Scene();
     void makeDrawable();
     void Render();
-    Color trace(Ray ray, int d = 0);
-    Hit intersectAll(Ray ray);
 };
 
+
 Scene::Scene()
-    : camera(Point(8, 0, -2), Point(7, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0))
-{
-    La = Color(0.2, 0.2, 0.5);
+        : camera(Point(8, 0, -2), Point(7, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0)) {
 
     lights.push_back(Light(Vector(2.5, 1.2, -0.2), Color(1.9, 1.9, 1.9)));
     lights.push_back(Light(Vector(2.5, 1.2, -0.2), Color(1.9, 1.8, 0.6)));
 }
 
 void Scene::makeDrawable() {
-    Material *glass_mat = new Material;
-    glass_mat->kd = Color(0.01, 0.01, 0.02);
-    glass_mat->ka = Color(0.5, 0.5, 0.5);
-    glass_mat->ks = Color(0.0, 0.0, 0.0);
-    glass_mat->shine = 50;
-    glass_mat->n = 1.5f;
-    glass_mat->F0 = Color(0.2, 0.2, 0.0);
-    glass_mat->isReflective = false;
-    glass_mat->isRefractive = true;
+    objects.clear();
 
-    Material *bier_mat = new Material;
-    bier_mat->kd = Color(0.0, 0.0, 0.0);
-    bier_mat->ka = Color(0.3, 0.3, 0.0);
-    bier_mat->ks = Color(0.0, 0.0, 0.0);
-    bier_mat->shine = 50;
-    bier_mat->n = 1.3 / 1.5;
-    bier_mat->F0 = Color(0, 0, 0.8);
-    bier_mat->isReflective = false;
-    bier_mat->isRefractive = true;
+    Material glass_mat;
+    glass_mat.kd = Color(0.01, 0.01, 0.02);
+    glass_mat.ka = Color(0.5, 0.5, 0.5);
+    glass_mat.ks = Color(0.0, 0.0, 0.0);
+    glass_mat.shine = 50;
+    glass_mat.n = 1.5f;
+    glass_mat.F0 = Color(0.2, 0.2, 0.0);
+    glass_mat.isReflective = false;
+    glass_mat.isRefractive = true;
 
-    Material *bier_mat2 = new Material;
-    bier_mat2->kd = Color(0.0, 0.0, 0.0);
-    bier_mat2->ka = Color(0.4, 0.4, 0.0);
-    bier_mat2->ks = Color(0.0, 0.0, 0.0);
-    bier_mat2->shine = 50;
-    bier_mat2->n = 1.3 / 1.0;
-    bier_mat2->F0 = Color(0, 0, 0.9);
-    bier_mat2->isReflective = true;
-    bier_mat2->isRefractive = true;
+    Material bier_mat;
+    bier_mat.kd = Color(0.0, 0.0, 0.0);
+    bier_mat.ka = Color(0.3, 0.3, 0.0);
+    bier_mat.ks = Color(0.0, 0.0, 0.0);
+    bier_mat.shine = 50;
+    bier_mat.n = 1.3 / 1.5;
+    bier_mat.F0 = Color(0, 0, 0.8);
+    bier_mat.isReflective = false;
+    bier_mat.isRefractive = true;
 
-    Material *talp_mat = new Material;
-    talp_mat->kd = Color(.1, .1, .1);
-    talp_mat->ka = Color(.1, .1, .1);
-    talp_mat->ks = Color(0.0, 0.0, 0.0);
-    talp_mat->shine = 40;
-    talp_mat->n = 1.5f;
-    talp_mat->F0 = Color(0.0, 0.0, 0.0);
-    talp_mat->isReflective = false;
-    talp_mat->isRefractive = true;
+    Material bier_mat2;
+    bier_mat2.kd = Color(0.0, 0.0, 0.0);
+    bier_mat2.ka = Color(0.4, 0.4, 0.0);
+    bier_mat2.ks = Color(0.0, 0.0, 0.0);
+    bier_mat2.shine = 50;
+    bier_mat2.n = 1.3 / 1.0;
+    bier_mat2.F0 = Color(0, 0, 0.9);
+    bier_mat2.isReflective = true;
+    bier_mat2.isRefractive = true;
 
-    Material *bubi_mat = new Material;
-    bubi_mat->kd = Color(0.2, 0.5, 0.2);
-    bubi_mat->ka = Color(0.3, 0.3, 0.3);
-    bubi_mat->ks = Color(0.0, 0.0, 0.0);
-    bubi_mat->shine = 20;
-    bubi_mat->n = 1.0 / 1.3f;
-    bubi_mat->F0 = Color(0.0, 0.0, 0.0);
-    bubi_mat->isReflective = false;
-    bubi_mat->isRefractive = true;
+    Material talp_mat;
+    talp_mat.kd = Color(.1, .1, .1);
+    talp_mat.ka = Color(.1, .1, .1);
+    talp_mat.ks = Color(0.0, 0.0, 0.0);
+    talp_mat.shine = 40;
+    talp_mat.n = 1.5f;
+    talp_mat.F0 = Color(0.0, 0.0, 0.0);
+    talp_mat.isReflective = false;
+    talp_mat.isRefractive = true;
 
-    Material *plane_mat1 = new Material;
-    plane_mat1->kd = Color(1.0, 1.0, 1.0);
-    plane_mat1->ka = Color(0.5, 0.5, 0.5);
-    plane_mat1->ks = Color(4.0, 4.0, 4.0);
-    plane_mat1->shine = 30;
-    plane_mat1->n = 1.5f;
-    plane_mat1->F0 = Color(0.5, 0.5, 0.5);
-    plane_mat1->isReflective = false;
-    plane_mat1->isRefractive = false;
+    Material bubi_mat;
+    bubi_mat.kd = Color(0.2, 0.5, 0.2);
+    bubi_mat.ka = Color(0.3, 0.3, 0.3);
+    bubi_mat.ks = Color(0.0, 0.0, 0.0);
+    bubi_mat.shine = 20;
+    bubi_mat.n = 1.0 / 1.3f;
+    bubi_mat.F0 = Color(0.0, 0.0, 0.0);
+    bubi_mat.isReflective = false;
+    bubi_mat.isRefractive = true;
 
-    Material *plane_mat2 = new Material;
-    plane_mat2->kd = Color(1.0, 0.0, 0.0);
-    plane_mat2->ka = Color(0.8, 0.0, 0.0);
-    plane_mat2->ks = Color(2.0, 2.0, 2.0);
-    plane_mat2->shine = 30;
-    plane_mat2->n = 1.5f;
-    plane_mat2->F0 = Color(0.5, 0.5, 0.0);
-    plane_mat2->isReflective = false;
-    plane_mat2->isRefractive = false;
+    Material plane_mat1;
+    plane_mat1.kd = Color(1.0, 1.0, 1.0);
+    plane_mat1.ka = Color(0.5, 0.5, 0.5);
+    plane_mat1.ks = Color(4.0, 4.0, 4.0);
+    plane_mat1.shine = 30;
+    plane_mat1.n = 1.5f;
+    plane_mat1.F0 = Color(0.5, 0.5, 0.5);
+    plane_mat1.isReflective = false;
+    plane_mat1.isRefractive = false;
+
+    Material plane_mat2;
+    plane_mat2.kd = Color(1.0, 0.0, 0.0);
+    plane_mat2.ka = Color(0.8, 0.0, 0.0);
+    plane_mat2.ks = Color(2.0, 2.0, 2.0);
+    plane_mat2.shine = 30;
+    plane_mat2.n = 1.5f;
+    plane_mat2.F0 = Color(0.5, 0.5, 0.0);
+    plane_mat2.isReflective = false;
+    plane_mat2.isRefractive = false;
 
     Elipszoid *glass = new Elipszoid(Point(3.5, 0, 10), Vector(3, 1.5, 1.5), glass_mat);
     Elipszoid *bier = new Elipszoid(Point(3.5, 0, 10), Vector(2.9, 1.45, 1.45), bier_mat);
@@ -764,10 +767,10 @@ void Scene::makeDrawable() {
 
     Plane *asztal = new Plane(Point(0, 10, 5), Point(0, 10, 25), Point(0, -10, 25), Point(0, -10, 5), plane_mat1,
                               plane_mat2);
-    Plane *cutter = new Plane(Point(4.5, 10, 5), Point(4.5, 10, 30), Point(4.5, -10, 30), Point(4.5, -10, 5),
+    Plane *cutter = new Plane(Point(4.5, 10, 5), Point(4.5, 10, 30), Point(4.5, -10, 30), Point(4.5, -10, 5), bier_mat2,
                               bier_mat2);
 
-    CSG* csg = new CSG();
+    CSG *csg = new CSG();
     csg->addObject(bier, UNIO);
     csg->addObject(glass, UNIO);
     csg->addObject(cutter, FELTER_TOP);
@@ -788,96 +791,8 @@ void Scene::makeDrawable() {
     }
 }
 
-void Scene::Render() {
-    int indexI = 0;
-    int indexJ = 0;
-    {
-        std::lock_guard<std::mutex> guard(mutex);
-        sectorIJ(indexJ, indexI);
-    }
-
-    for (int x = sectors[indexI][indexJ].x; x < sectors[indexI][indexJ].width + sectors[indexI][indexJ].x; x++) {
-        for (int y = sectors[indexI][indexJ].y; y < sectors[indexI][indexJ].height + sectors[indexI][indexJ].y; y++) {
-            Ray ray = camera.getRay(x, y);
-            Color Lrad = trace(ray);
-            image[y * screenWidth * 3 + x * 3 + 0] = Lrad.r;
-            image[y * screenWidth * 3 + x * 3 + 1] = Lrad.g;
-            image[y * screenWidth * 3 + x * 3 + 2] = Lrad.b;
-        }
-    }
-    sectors[indexI][indexJ].finished = true;
-}
-
-Color Scene::trace(Ray ray, int d) {
-    if (d > 5) return La;
-    Hit hit = intersectAll(ray);
-    if (hit.t < 0) return La;
-
-    Color c = La * hit.mat->ka;
-    Vector N = hit.normal;
-    Vector x = hit.x;
-
-    Color temp = hit.mat->F0;
-
-    for (int l = 0; l < lights.size(); l++) {
-        Ray shadowRay;
-        shadowRay.o = x;
-        shadowRay.v = lights[l].pos - x;
-        Hit shadowHit = intersectAll(shadowRay);
-        Vector y = shadowHit.x;
-        if (shadowHit.t<0 || (x - y).Length()>(x - lights[l].pos).Length()) {
-            Vector H = lights[l].pos - ray.v;
-            H.Normalize();
-            float costheta = (N * shadowRay.v.Normalize());
-            if (costheta < 0) costheta = 0;
-            float cosdelta = H * N;
-            if (cosdelta < 0 /*|| hit.mat->isRefractive*/) cosdelta = 0;
-            c += lights[l].lin * (hit.mat->kd * costheta + hit.mat->ks * pow(cosdelta, hit.mat->shine));
-        }
-    }
-
-    if (hit.mat->isReflective) {
-        Ray reflectedRay;
-        reflectedRay.o = x;
-        hit.mat->ReflectionDir(reflectedRay.v, N, ray.v);
-        c += hit.mat->Frensel(N, ray.v) * trace(reflectedRay, d + 1);
-    }
-
-    if (hit.mat->isRefractive) {
-        Ray refractedRay;
-        refractedRay.o = x;
-
-        if (hit.mat->RefractionDir(refractedRay.v, N, ray.v))
-            c += (Color(1, 1, 1) - hit.mat->Frensel(N, ray.v)) * trace(refractedRay, d + 1);
-        else {
-            hit.mat->F0 = Color(1, 1, 1);
-            Ray reflectedRay;
-            reflectedRay.o = x;
-            hit.mat->ReflectionDir(reflectedRay.v, N, ray.v);
-            c += hit.mat->Frensel(N, ray.v) * trace(reflectedRay, d + 1);
-        }
-    }
-
-    hit.mat->F0 = temp;
-
-    return c;
-}
-
-Hit Scene::intersectAll(Ray ray) {
-    Hit hit;
-    for (int i = 0; i < objects.size(); i++) {
-        Hit newHit = objects[i]->Intersect(ray);
-        if (newHit.t > E) {
-            if (hit.t < E || newHit.t < hit.t)
-                hit = newHit;
-        }
-    }
-
-    if (hit.t > E) hit.normal.Normalize();
-    return hit;
-}
-
 void reset() {
+    std::lock_guard<std::mutex> guard(mutex);
     int w = 75;
     int h = 75;
 
@@ -893,26 +808,123 @@ void reset() {
     }
 }
 
+void Scene::Render() {
+    Raytracer raytracer;
+    int indexI = 0;
+    int indexJ = 0;
+    sectorIJ(indexJ, indexI);
+
+    for (int x = sectors[indexI][indexJ].x; x < sectors[indexI][indexJ].width + sectors[indexI][indexJ].x; x++) {
+        for (int y = sectors[indexI][indexJ].y; y < sectors[indexI][indexJ].height + sectors[indexI][indexJ].y; y++) {
+            Ray ray = camera.getRay(x, y);
+            Color Lrad = raytracer.trace(lights, objects, ray);
+            image[y * screenWidth * 3 + x * 3 + 0] = Lrad.r;
+            image[y * screenWidth * 3 + x * 3 + 1] = Lrad.g;
+            image[y * screenWidth * 3 + x * 3 + 2] = Lrad.b;
+        }
+    }
+
+    std::lock_guard<std::mutex> guard(mutex);
+    sectors[indexI][indexJ].finished = true;
+}
+
+Color Raytracer::trace(const std::vector<Light> &lights, const std::vector<Object *> &objects, Ray ray, int d) {
+    if (d > 5) return La;
+    Hit hit = intersectAll(objects, ray);
+    if (hit.t < 0) return La;
+
+    Color c = La * hit.mat.ka;
+    Vector N = hit.normal;
+    Vector x = hit.x;
+
+    Color temp = hit.mat.F0;
+
+    for (int l = 0; l < lights.size(); l++) {
+        Ray shadowRay;
+        shadowRay.o = x;
+        shadowRay.v = lights[l].pos - x;
+        Hit shadowHit = intersectAll(objects, shadowRay);
+        Vector y = shadowHit.x;
+        if (shadowHit.t<0 || (x - y).Length()>(x - lights[l].pos).Length()) {
+            Vector H = lights[l].pos - ray.v;
+            H.Normalize();
+            float costheta = (N * shadowRay.v.Normalize());
+            if (costheta < 0) costheta = 0;
+            float cosdelta = H * N;
+            if (cosdelta < 0 /*|| hit.mat->isRefractive*/) cosdelta = 0;
+            Color lin = lights[l].lin;
+            c += lin * (hit.mat.kd * costheta + hit.mat.ks * pow(cosdelta, hit.mat.shine));
+        }
+    }
+
+    if (hit.mat.isReflective) {
+        Ray reflectedRay;
+        reflectedRay.o = x;
+        hit.mat.ReflectionDir(reflectedRay.v, N, ray.v);
+        c += hit.mat.Frensel(N, ray.v) * trace(lights, objects, reflectedRay, d + 1);
+    }
+
+    if (hit.mat.isRefractive) {
+        Ray refractedRay;
+        refractedRay.o = x;
+
+        if (hit.mat.RefractionDir(refractedRay.v, N, ray.v))
+            c += (Color(1, 1, 1) - hit.mat.Frensel(N, ray.v)) * trace(lights, objects, refractedRay, d + 1);
+        else {
+            hit.mat.F0 = Color(1, 1, 1);
+            Ray reflectedRay;
+            reflectedRay.o = x;
+            hit.mat.ReflectionDir(reflectedRay.v, N, ray.v);
+            c += hit.mat.Frensel(N, ray.v) * trace(lights, objects, reflectedRay, d + 1);
+        }
+    }
+
+    hit.mat.F0 = temp;
+
+    return c;
+}
+
+Hit Raytracer::intersectAll(const std::vector<Object *> &objects, Ray ray) {
+    Hit hit;
+    for (int i = 0; i < objects.size(); i++) {
+        Hit newHit = objects[i]->Intersect(ray);
+        if (newHit.t > E) {
+            if (hit.t < E || newHit.t < hit.t)
+                hit = newHit;
+        }
+    }
+
+    if (hit.t > E) hit.normal.Normalize();
+    return hit;
+}
+
+Scene scene;
+
 void onInitialization() {
     glViewport(0, 0, screenWidth, screenHeight);
+    scene.makeDrawable();
     reset();
 }
+
+#define THREADS 1
+std::thread threads[THREADS];
 
 void onDisplay() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    std::vector<std::thread> workers;
-    for (int i = 0; i < 16; i++) {
-        workers.push_back(std::thread([&i]() {
-            Scene scene;
-            scene.makeDrawable();
+    for (int i = 0; i < THREADS; ++i) {
+        threads[i] = std::thread([&]() {
             scene.Render();
-        }));
+        });
     }
 
-    std::for_each(workers.begin(), workers.end(), [](std::thread &t) {
-        t.join();
-    });
+    for (int i = 0; i < THREADS; ++i) {
+        threads[i].join();
+    }
+
+    glDrawPixels(screenWidth, screenHeight, GL_RGB, GL_FLOAT, image);
+
+    glutSwapBuffers();
 
     bool finished = true;
     for (int i = 0; i < 8; i++) {
@@ -926,12 +938,9 @@ void onDisplay() {
 
     if (finished) {
         std::cout << "finished" << std::endl;
+        scene.makeDrawable();
         reset();
     }
-
-    glDrawPixels(screenWidth, screenHeight, GL_RGB, GL_FLOAT, image);
-
-    glutSwapBuffers();
 }
 
 void onKeyboard(unsigned char key, int x, int y) {
