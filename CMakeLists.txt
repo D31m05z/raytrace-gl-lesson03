@@ -31,6 +31,8 @@ find_package(OpenGL REQUIRED)
 find_package(GLU REQUIRED)
 find_package(GLUT REQUIRED)
 
+set (CMAKE_CXX_STANDARD 11)
+
 add_executable(${PROJECT_NAME} main.cpp)
 
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
