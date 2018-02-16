@@ -26,13 +26,18 @@
 #include <math.h>
 #include <stdlib.h>
 
+#if defined(__APPLE__)
+#include <OpenGL/gl.h>
+#include <OpenGL/glu.h>
+#include <GLUT/glut.h>
+#else
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__)
 #include <windows.h>
-#endif // Win32 platform
-
+#endif
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include <GL/glut.h>
+#endif
 
 const int screenWidth = 600;
 const int screenHeight = 600;
