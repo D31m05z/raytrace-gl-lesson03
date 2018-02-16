@@ -27,8 +27,10 @@
 #include <math.h>
 #include <stdlib.h>
 #include <iostream>
+#include <thread>
 #include <vector>
 #include <algorithm>
+#include <mutex>
 
 #if defined(__APPLE__)
 
@@ -50,6 +52,7 @@ const int screenHeight = 600;
 const float E = 0.001f;
 float image[screenWidth * screenHeight * 3];
 const size_t numBubies = 40;
+std::mutex mutex;
 
 enum CSG_operator {
     UNIO,
@@ -660,7 +663,6 @@ void sectorIJ(int &_i, int &_j) {
             }
         }
     }
-    _i = _j = -1;
 }
 
 class Scene {
@@ -670,15 +672,11 @@ class Scene {
     Color La;
 public:
     Scene();
-
     void makeDrawable();
-
     void Render();
-
     Color trace(Ray ray, int d = 0);
-
     Hit intersectAll(Ray ray);
-} scene;
+};
 
 Scene::Scene()
     : camera(Point(8, 0, -2), Point(7, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0))
@@ -791,23 +789,23 @@ void Scene::makeDrawable() {
 }
 
 void Scene::Render() {
-    if (isFinished) return;
+    int indexI = 0;
+    int indexJ = 0;
+    {
+        std::lock_guard<std::mutex> guard(mutex);
+        sectorIJ(indexJ, indexI);
+    }
 
-    for (int x = 0; x < screenWidth; x++) {
-        for (int y = 0; y < screenHeight; y++) {
-            Ray ray = camera->getRay(x, y);
+    for (int x = sectors[indexI][indexJ].x; x < sectors[indexI][indexJ].width + sectors[indexI][indexJ].x; x++) {
+        for (int y = sectors[indexI][indexJ].y; y < sectors[indexI][indexJ].height + sectors[indexI][indexJ].y; y++) {
+            Ray ray = camera.getRay(x, y);
             Color Lrad = trace(ray);
-            image[y * screenWidth * 3 + x * 3] = Lrad.r;
+            image[y * screenWidth * 3 + x * 3 + 0] = Lrad.r;
             image[y * screenWidth * 3 + x * 3 + 1] = Lrad.g;
             image[y * screenWidth * 3 + x * 3 + 2] = Lrad.b;
         }
-
-        glClearColor(0.1f, 0.2f, 0.3f, 1.0f);        // torlesi szin beallitasa
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // kepernyo torles
-        glDrawPixels(screenWidth, screenHeight, GL_RGB, GL_FLOAT, image);
-        glutSwapBuffers();
     }
-    isFinished = true;
+    sectors[indexI][indexJ].finished = true;
 }
 
 Color Scene::trace(Ray ray, int d) {
@@ -867,7 +865,7 @@ Color Scene::trace(Ray ray, int d) {
 
 Hit Scene::intersectAll(Ray ray) {
     Hit hit;
-    for (int i = 0; i < numObjects; i++) {
+    for (int i = 0; i < objects.size(); i++) {
         Hit newHit = objects[i]->Intersect(ray);
         if (newHit.t > E) {
             if (hit.t < E || newHit.t < hit.t)
@@ -893,19 +891,6 @@ void reset() {
             sectors[i][j].rendering = false;
         }
     }
-
-    sectors[7][7].finished = true;
-    sectors[7][7].rendering = true;
-}
-
-void initScene() {
-
-    camera = new Camera(Point(8, 0, -2), Point(7, 0, 0), Vector(0, 1, 0), Vector(1, 0, 0));
-    numLights = 0;
-    lights[numLights++] = new Light(Vector(2.5, 1.2, -0.2), Color(1.9, 1.9, 1.9));
-    lights[numLights++] = new Light( Vector(2.5,1.2,-0.2), Color(1.9,1.8,0.6) );
-
-    scene.makeDrawable();
 }
 
 void onInitialization() {
@@ -916,13 +901,38 @@ void onInitialization() {
 void onDisplay() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    scene.Render();
+    std::vector<std::thread> workers;
+    for (int i = 0; i < 16; i++) {
+        workers.push_back(std::thread([&i]() {
+            Scene scene;
+            scene.makeDrawable();
+            scene.Render();
+        }));
+    }
+
+    std::for_each(workers.begin(), workers.end(), [](std::thread &t) {
+        t.join();
+    });
+
+    bool finished = true;
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            if (!sectors[i][j].finished) {
+                finished = false;
+                break;
+            }
+        }
+    }
+
+    if (finished) {
+        std::cout << "finished" << std::endl;
+        reset();
+    }
 
     glDrawPixels(screenWidth, screenHeight, GL_RGB, GL_FLOAT, image);
 
     glutSwapBuffers();
 }
-
 
 void onKeyboard(unsigned char key, int x, int y) {
 }
