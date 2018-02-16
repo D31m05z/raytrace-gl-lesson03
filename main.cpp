@@ -202,6 +202,7 @@ struct Ray {
 };
 
 class Camera {
+public:
     Vector eye;
     Vector lookat;
     Vector up;
@@ -606,7 +607,6 @@ public:
     void CSGIntersect(Ray ray, Hit *hits[], int &numHit, int csg_operator) override {}
 
     Hit Intersect(Ray ray) override {
-        std::lock_guard<std::mutex> guard(mutex);
         Hit *hits[10];
         numHit = 0;
         Hit hit;
@@ -674,6 +674,7 @@ struct Raytracer {
 };
 
 class Scene {
+public:
     Camera camera;
     std::vector<Light> lights;
     std::vector<Object *> objects;
@@ -795,7 +796,6 @@ void Scene::makeDrawable() {
 }
 
 void reset() {
-    std::lock_guard<std::mutex> guard(mutex);
     int w = 75;
     int h = 75;
 
@@ -813,7 +813,8 @@ void reset() {
 
 void Scene::Render() {
     Raytracer raytracer;
-    //while(running) {
+    while(running)
+    {
         int indexI = 0;
         int indexJ = 0;
         sectorIJ(indexJ, indexI);
@@ -829,7 +830,7 @@ void Scene::Render() {
         }
         std::lock_guard<std::mutex> guard(mutex);
         sectors[indexI][indexJ].finished = true;
-    //}
+    }
 }
 
 Color Raytracer::trace(const std::vector<Light> &lights, const std::vector<Object *> &objects, Ray ray, int d) {
@@ -902,25 +903,27 @@ Hit Raytracer::intersectAll(const std::vector<Object *> &objects, Ray ray) {
     return hit;
 }
 
-Scene scene;
+#define THREADS 16
+std::thread threads[THREADS];
+Scene scene[THREADS];
 
 void onInitialization() {
     running.store(true);
-
     glViewport(0, 0, screenWidth, screenHeight);
-    scene.makeDrawable();
     reset();
+    for (int i = 0; i < THREADS; ++i) {
+        scene[i].makeDrawable();
+    }
 }
-
-#define THREADS 4
-std::thread threads[THREADS];
 
 void onDisplay() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     for (int i = 0; i < THREADS; ++i) {
-        threads[i] = std::thread([&]() {
-            scene.Render();
+        threads[i] = std::thread([i]() {
+            scene[i].lights[0].pos.y += 0.01f;
+            scene[i].lights[0].pos.z += 0.01f;
+            scene[i].Render();
         });
     }
 
@@ -944,7 +947,6 @@ void onDisplay() {
 
     if (finished) {
         std::cout << "finished" << std::endl;
-        scene.makeDrawable();
         reset();
         running.store(true);
     }
