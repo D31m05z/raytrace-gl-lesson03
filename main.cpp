@@ -51,8 +51,9 @@ const int screenWidth = 600;
 const int screenHeight = 600;
 const float E = 0.001f;
 float image[screenWidth * screenHeight * 3];
-const size_t numBubies = 40;
+const size_t numBubies = 4;
 std::mutex mutex;
+std::atomic<bool> running;
 
 enum CSG_operator {
     UNIO,
@@ -656,6 +657,8 @@ void sectorIJ(int &_i, int &_j) {
             }
         }
     }
+
+    running.store(false);
 }
 
 struct Raytracer {
@@ -810,22 +813,23 @@ void reset() {
 
 void Scene::Render() {
     Raytracer raytracer;
-    int indexI = 0;
-    int indexJ = 0;
-    sectorIJ(indexJ, indexI);
-
-    for (int x = sectors[indexI][indexJ].x; x < sectors[indexI][indexJ].width + sectors[indexI][indexJ].x; x++) {
-        for (int y = sectors[indexI][indexJ].y; y < sectors[indexI][indexJ].height + sectors[indexI][indexJ].y; y++) {
-            Ray ray = camera.getRay(x, y);
-            Color Lrad = raytracer.trace(lights, objects, ray);
-            image[y * screenWidth * 3 + x * 3 + 0] = Lrad.r;
-            image[y * screenWidth * 3 + x * 3 + 1] = Lrad.g;
-            image[y * screenWidth * 3 + x * 3 + 2] = Lrad.b;
+    //while(running) {
+        int indexI = 0;
+        int indexJ = 0;
+        sectorIJ(indexJ, indexI);
+        for (int x = sectors[indexI][indexJ].x; x < sectors[indexI][indexJ].width + sectors[indexI][indexJ].x; x++) {
+            for (int y = sectors[indexI][indexJ].y;
+                 y < sectors[indexI][indexJ].height + sectors[indexI][indexJ].y; y++) {
+                Ray ray = camera.getRay(x, y);
+                Color Lrad = raytracer.trace(lights, objects, ray);
+                image[y * screenWidth * 3 + x * 3 + 0] = Lrad.r;
+                image[y * screenWidth * 3 + x * 3 + 1] = Lrad.g;
+                image[y * screenWidth * 3 + x * 3 + 2] = Lrad.b;
+            }
         }
-    }
-
-    std::lock_guard<std::mutex> guard(mutex);
-    sectors[indexI][indexJ].finished = true;
+        std::lock_guard<std::mutex> guard(mutex);
+        sectors[indexI][indexJ].finished = true;
+    //}
 }
 
 Color Raytracer::trace(const std::vector<Light> &lights, const std::vector<Object *> &objects, Ray ray, int d) {
@@ -901,12 +905,14 @@ Hit Raytracer::intersectAll(const std::vector<Object *> &objects, Ray ray) {
 Scene scene;
 
 void onInitialization() {
+    running.store(true);
+
     glViewport(0, 0, screenWidth, screenHeight);
     scene.makeDrawable();
     reset();
 }
 
-#define THREADS 1
+#define THREADS 4
 std::thread threads[THREADS];
 
 void onDisplay() {
@@ -940,6 +946,7 @@ void onDisplay() {
         std::cout << "finished" << std::endl;
         scene.makeDrawable();
         reset();
+        running.store(true);
     }
 }
 
