@@ -30,6 +30,7 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 
 #if defined(__APPLE__)
@@ -844,7 +845,7 @@ Color Raytracer::trace(const std::vector<Light> &lights, const std::vector<Objec
 
     Color temp = hit.mat.F0;
 
-    for (int l = 0; l < lights.size(); l++) {
+    for (size_t l = 0; l < lights.size(); l++) {
         Ray shadowRay;
         shadowRay.o = x;
         shadowRay.v = lights[l].pos - x;
@@ -891,7 +892,7 @@ Color Raytracer::trace(const std::vector<Light> &lights, const std::vector<Objec
 
 Hit Raytracer::intersectAll(const std::vector<Object *> &objects, Ray ray) {
     Hit hit;
-    for (int i = 0; i < objects.size(); i++) {
+    for (size_t i = 0; i < objects.size(); i++) {
         Hit newHit = objects[i]->Intersect(ray);
         if (newHit.t > E) {
             if (hit.t < E || newHit.t < hit.t)
